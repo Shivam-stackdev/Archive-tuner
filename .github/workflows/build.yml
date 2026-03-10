@@ -17,7 +17,7 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew
       - name: Build Debug APK
-        run: ./gradlew assembleDebug -Pksp.incremental=false --stacktrace
+        run: ./gradlew assembleDebug -x kspDebugKotlin -x kspArm64DebugKotlin -x kspArmeabiDebugKotlin -x kspX86DebugKotlin -x kspX86_64DebugKotlin --stacktrace
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
