@@ -1,139 +1,51 @@
-name: Nightly Build
+name: Build APKs
 
 on:
-  repository_dispatch:
-    types: [trigger-nightly]
   workflow_dispatch:
+  push:
+    branches: [ 'main', 'dev' ]
+    paths-ignore:
+      - 'README.md'
+      - 'fastlane/**'
+      - 'assets/**'
+      - '.github/**/*.md'
+      - '.github/FUNDING.yml'
+      - '.github/ISSUE_TEMPLATE/**'
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+permissions:
+  contents: write
+  discussions: write
+  actions: write
 
 jobs:
   build:
+    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
     runs-on: ubuntu-latest
-    outputs:
-      new_version: ${{ env.NEW_VERSION }}
-      new_version_code: ${{ env.NEW_VERSION_CODE }}
-      changelog: ${{ steps.changelog.outputs.changelog }}
-      date: ${{ steps.date.outputs.date }}
-      time: ${{ steps.time.outputs.time }}
+
     strategy:
       matrix:
         abi: [ 'arm64', 'armeabi', 'x86', 'x86_64', 'universal' ]
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          repository: koiverse/ArchiveTune
-          ref: dev
-
-      - name: 📃 Generate changelog
-        id: changelog
-        run: |
-          CHANGELOG=$(git log --pretty=format="- ([%h](https://github.com/koiverse/ArchiveTune/commit/%H)): **\"%s\"** by **@%an**" --since="1 day ago" --no-merges)
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "## Changelog" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: 🗓️ Get Date
-        id: date
-        run: echo "date=$(date +'%Y/%m/%d')" >> $GITHUB_OUTPUT
-
-      - name: ⏳ Get Time
-        id: time
-        run: echo "time=$(date +'%I:%M:%S %p')" >> $GITHUB_OUTPUT
-
-      - name: 🤖 Set up JDK 21
+      
+      - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
-
-      - name: 🐘 Set Up Gradle
+      
+      - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
           cache-cleanup: on-success
-
-      - name: 💉 Grant execute permission for gradlew
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+          
+      - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: ⌨️ Update version name and code for nightly build
-        run: |
-          # original values
-          ORIGINAL_VERSION=$(grep 'versionName = ' app/build.gradle.kts | sed 's/.*versionName = "\(.*\)"/\1/')
-          ORIGINAL_VERSION_CODE=$(grep 'versionCode = ' app/build.gradle.kts | head -n1 | sed 's/.*versionCode = \(.*\)/\1/' | tr -d '[:space:]')
-
-          # new versionName (prefix N + YYYYMMDD)
-          NEW_VERSION="N$(date +%Y%m%d)"
-
-          # prefer CI build number; fallback to date if not available
-          NEW_VERSION_CODE="${GITHUB_RUN_NUMBER}"
-          if [ -z "$NEW_VERSION_CODE" ]; then
-            NEW_VERSION_CODE=$(date +%Y%m%d)
-          fi
-
-          # apply replacements
-          sed -i "s/versionName = \"$ORIGINAL_VERSION\"/versionName = \"$NEW_VERSION\"/" app/build.gradle.kts
-          sed -i "s/versionCode = $ORIGINAL_VERSION_CODE/versionCode = $NEW_VERSION_CODE/" app/build.gradle.kts
-
-          echo "Changed version from $ORIGINAL_VERSION ($ORIGINAL_VERSION_CODE) to $NEW_VERSION ($NEW_VERSION_CODE)"
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-          echo "NEW_VERSION_CODE=$NEW_VERSION_CODE" >> $GITHUB_ENV
-
-      - name: ⌨️ Update app name and package for nightly
-        run: |
-          sed -i 's/applicationId = "moe.koiverse.archivetune"/applicationId = "moe.koiverse.archivetune.nightly"/' app/build.gradle.kts
-          sed -i 's/ArchiveTune Debug/ArchiveTune Nightly Debug/' app/src/debug/res/values/app_name.xml
-          sed -i 's/ArchiveTune/ArchiveTune Nightly/' app/src/main/res/values/app_name.xml
-
-      - name: ⌨️ Set default update channel to nightly
-        run: sed -i 's/defaultValue = UpdateChannel.STABLE/defaultValue = UpdateChannel.NIGHTLY/' app/src/main/kotlin/moe/koiverse/archivetune/ui/screens/settings/UpdateScreen.kt
-
-      - name: ⌨️ Update about screen to show ABI_NIGHTLY label
-        run: |
-          sed -i 's/text = BuildConfig.ARCHITECTURE.uppercase(),/text = "${BuildConfig.ARCHITECTURE.uppercase()}_NIGHTLY",/' app/src/main/kotlin/moe/koiverse/archivetune/ui/screens/settings/AboutScreen.kt
-
-      - name: ⌨️ Update update check URLs for fork
-        run: |
-          sed -i 's|https://api.github.com/repos/koiverse/ArchiveTune/releases|https://api.github.com/repos/${{ github.repository }}/releases|g' app/src/main/kotlin/moe/koiverse/archivetune/utils/Updater.kt
-          sed -i 's|https://github.com/koiverse/ArchiveTune/releases|https://github.com/${{ github.repository }}/releases|g' app/src/main/kotlin/moe/koiverse/archivetune/utils/Updater.kt
-          sed -i 's/ArchiveTune.apk/ArchiveTune-Nightly.apk/' app/src/main/kotlin/moe/koiverse/archivetune/utils/Updater.kt
-          sed -i 's/app-${architecture}-release.apk/app-${architecture}-nightly.apk/' app/src/main/kotlin/moe/koiverse/archivetune/utils/Updater.kt
-          sed -i 's|https://api.github.com/repos/koiverse/ArchiveTune/releases?per_page=$perPage|https://api.github.com/repos/${{ github.repository }}/releases?per_page=$perPage|g' app/src/main/kotlin/moe/koiverse/archivetune/utils/Updater.kt
-
-      - name: 🔨 Build Release APK
-        run: |
-          max_attempts=3
-          attempt=1
-          while [ $attempt -le $max_attempts ]; do
-            echo "================================="
-            echo "🔄 Attempt $attempt of $max_attempts"
-            echo "================================="
-            if ./gradlew assemble${{ matrix.abi }}Release; then
-              echo "==============="
-              echo "✅ Build succeeded"
-              echo "==============="
-              exit 0
-            else
-              echo "================================="
-              echo "❌ Build failed with exit code $?"
-              echo "================================="
-              if [ $attempt -eq $max_attempts ]; then
-                echo "================================="
-                echo "☹️ All $max_attempts attempts failed"
-                echo "================================="
-                exit 1
-              fi
-              echo "========================"
-              echo "⏳ Retrying in 5 seconds..."
-              sleep 5
-              echo "========================"
-              attempt=$((attempt + 1))
-            fi
-          done
+      - name: Build Release APK
+        run: ./gradlew assemble${{ matrix.abi }}Release
         env:
           PULL_REQUEST: 'false'
           GITHUB_EVENT_NAME: ${{ github.event_name }}
@@ -141,72 +53,61 @@ jobs:
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
           TOGETHER_BEARER_TOKEN: ${{ secrets.TOGETHER_BEARER_TOKEN }}
 
-      - name: 🔏 Sign APK
-        id: sign_app
-        uses: ilharp/sign-android-release@v2
+      - name: Sign APK
+        uses: ilharp/sign-android-release@v2.0.0
         with:
-          releaseDir: app/build/outputs/apk/${{ matrix.abi }}/release
-          signingKey: ${{ secrets.SIGNING_KEY_BASE64 }}
+          releaseDir: app/build/outputs/apk/${{ matrix.abi }}/release/
+          signingKey: ${{ secrets.KEYSTORE }}
           keyAlias: ${{ secrets.KEY_ALIAS }}
           keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
-
-      - name: 📲 Move signed APK
+          buildToolsVersion: 35.0.0
+      
+      - name: Move signed APK
         run: |
           mkdir -p app/build/outputs/apk/${{ matrix.abi }}/release/out
-          # Get signed files from action output
-          IFS=':' read -ra SIGNED_FILES <<< "${{ steps.sign_app.outputs.signedFiles }}"
-          for signed_file in "${SIGNED_FILES[@]}"; do
-            if [ -f "$signed_file" ]; then
-              if [ "${{ matrix.abi }}" = "universal" ]; then
-                cp "$signed_file" app/build/outputs/apk/${{ matrix.abi }}/release/out/ArchiveTune-Nightly.apk
-              else
-                cp "$signed_file" app/build/outputs/apk/${{ matrix.abi }}/release/out/app-${{ matrix.abi }}-nightly.apk
-              fi
-            fi
-          done
-
-      - name: 📤 Upload Signed APK
+          find app/build/outputs/apk/${{ matrix.abi }}/release/ -name "*-signed.apk" -o -name "*-unsigned-signed.apk" | xargs -I{} mv {} app/build/outputs/apk/${{ matrix.abi }}/release/out/app-${{ matrix.abi }}-release.apk
+  
+      - name: Upload Signed APK
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.abi == 'universal' && 'ArchiveTune-Nightly' || format('app-{0}-nightly', matrix.abi) }}
+          name: app-${{ matrix.abi }}-release
           path: app/build/outputs/apk/${{ matrix.abi }}/release/out/*
 
-  create-release:
-    needs: [build]
+
+  build_debug:
+    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+
     steps:
       - uses: actions/checkout@v6
-        with:
-          repository: ${{ github.repository }}
-          ref: main
 
-      - name: 📥 Download APK in Artifacts
-        uses: actions/download-artifact@v8
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
         with:
-          path: downloaded_artifacts/
+          java-version: '21'
+          distribution: 'temurin'
+          
+      - name: Set Up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-cleanup: on-success
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+          
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-      - name: 📦 Create release
-        uses: softprops/action-gh-release@v2.6.1
-        with:
-          tag_name: ${{ needs.build.outputs.new_version }}
-          name: ${{ needs.build.outputs.new_version }}
-          files: |
-            downloaded_artifacts/**/*.apk
+      - name: Build Debug APK
+        run: ./gradlew assembleUniversalDebug
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          PULL_REQUEST: 'false'
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          TOGETHER_BEARER_TOKEN: ${{ secrets.TOGETHER_BEARER_TOKEN }}
 
-      - name: 📞 Trigger update release notes
-        run: |
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/dispatches \
-            -d '{"event_type": "update-release-notes", "client_payload": {"new_version": "${{ needs.build.outputs.new_version }}"}}'
-
-      - name: ❌ Notify on failure
-        if: failure()
-        run: |
-          echo "Build failed on $(date)"
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-universal-debug
+          path: app/build/outputs/apk/universal/debug/*.apk
